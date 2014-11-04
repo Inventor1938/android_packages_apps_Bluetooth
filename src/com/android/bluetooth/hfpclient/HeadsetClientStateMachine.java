@@ -453,6 +453,18 @@ final class HeadsetClientStateMachine extends StateMachine {
     private void updateCallSetupIndicator(int callsetup) {
         Log.d(TAG, "updateCallSetupIndicator " + callsetup + " " + mPendingAction.first);
 
+        if (mRingtone != null && mRingtone.isPlaying()) {
+            Log.d(TAG,"stopping ring after no response");
+            mRingtone.stop();
+            if (mAudioManager.getMode() == AudioManager.MODE_RINGTONE) {
+                mAudioManager.setMode(AudioManager.MODE_NORMAL);
+            }
+            //abandon audio focus
+            Log.d(TAG, "abandonAudioFocus");
+            // abandon audio focus after the mode has been set back to normal
+            mAudioManager.abandonAudioFocusForCall();
+        }
+
         if (waitForIndicators(-1, callsetup, -1)) {
             return;
         }
@@ -999,6 +1011,17 @@ final class HeadsetClientStateMachine extends StateMachine {
         int action;
 
         Log.d(TAG, "rejectCall");
+        if ( mRingtone != null && mRingtone.isPlaying()) {
+            Log.d(TAG,"stopping ring after call reject");
+            mRingtone.stop();
+            if (mAudioManager.getMode() == AudioManager.MODE_RINGTONE) {
+                mAudioManager.setMode(AudioManager.MODE_NORMAL);
+            }
+            //abandon audio focus
+            Log.d(TAG, "abandonAudioFocus");
+            // abandon audio focus after the mode has been set back to normal
+            mAudioManager.abandonAudioFocusForCall();
+        }
 
         BluetoothHeadsetClientCall c =
                 getCall(BluetoothHeadsetClientCall.CALL_STATE_INCOMING,
@@ -1454,6 +1477,8 @@ final class HeadsetClientStateMachine extends StateMachine {
                         case EVENT_TYPE_SUBSCRIBER_INFO:
                         case EVENT_TYPE_CURRENT_CALLS:
                         case EVENT_TYPE_OPERATOR_NAME:
+                        case EVENT_TYPE_CGMI:
+                        case EVENT_TYPE_CGMM:
                         default:
                             Log.e(TAG, "Connecting: ignoring stack event: " + event.type);
                             break;
@@ -1973,6 +1998,24 @@ final class HeadsetClientStateMachine extends StateMachine {
                             break;
                         case EVENT_TYPE_RING_INDICATION:
                             break;
+                        case EVENT_TYPE_CGMI:
+                            Log.d(TAG, "cgmi:" + event.valueString);
+                            // broadcast intent with the string
+                            intent = new Intent(BluetoothHeadsetClient.ACTION_AG_EVENT);
+                            intent.putExtra(BluetoothHeadsetClient.EXTRA_MANF_ID,
+                                     event.valueString);
+                            intent.putExtra(BluetoothDevice.EXTRA_DEVICE, event.device);
+                            mService.sendBroadcast(intent, ProfileService.BLUETOOTH_PERM);
+                            break;
+                        case EVENT_TYPE_CGMM:
+                            Log.d(TAG, "cgmm:" + event.valueString);
+                            // broadcast intent with the string
+                            intent = new Intent(BluetoothHeadsetClient.ACTION_AG_EVENT);
+                            intent.putExtra(BluetoothHeadsetClient.EXTRA_MANF_MODEL,
+                                     event.valueString);
+                            intent.putExtra(BluetoothDevice.EXTRA_DEVICE, event.device);
+                            mService.sendBroadcast(intent, ProfileService.BLUETOOTH_PERM);
+                            break;
                         default:
                             Log.e(TAG, "Unknown stack event: " + event.type);
                             break;
@@ -1999,6 +2042,18 @@ final class HeadsetClientStateMachine extends StateMachine {
         private void processConnectionEvent(int state, BluetoothDevice device) {
             switch (state) {
                 case HeadsetClientHalConstants.CONNECTION_STATE_DISCONNECTED:
+                    if (mRingtone != null && mRingtone.isPlaying()) {
+                        mRingtone.stop();
+                    if (mAudioManager.getMode() ==
+                            AudioManager.MODE_RINGTONE) {
+                        mAudioManager.setMode(AudioManager.MODE_NORMAL);
+                    }
+                    //abandon audio focus
+                    Log.d(TAG, "abandonAudioFocus");
+                    /* abandon audio focus after the mode has
+                     been set back to normal*/
+                    mAudioManager.abandonAudioFocusForCall();
+                    }
                     Log.d(TAG, "Connected disconnects.");
                     // AG disconnects
                     if (mCurrentDevice.equals(device)) {
@@ -2146,6 +2201,7 @@ final class HeadsetClientStateMachine extends StateMachine {
                     }
                     break;
                 case STACK_EVENT:
+                    Intent intent = null;
                     StackEvent event = (StackEvent) message.obj;
                     if (DBG) {
                         Log.d(TAG, "AudioOn: event type: " + event.type);
@@ -2160,6 +2216,50 @@ final class HeadsetClientStateMachine extends StateMachine {
                             Log.d(TAG, "AudioOn audio state changed" + event.device + ": "
                                     + event.valueInt);
                             processAudioEvent(event.valueInt, event.device);
+                            break;
+                        case EVENT_TYPE_RING_INDICATION:
+                            /* PTS test case TC_HF_ICA_BV_05_I creates SCO even
+                             * after disabling in-band ringtone, disconnect SCO
+                             * if inband ringtone is disabled */
+                            Log.i(TAG,"Ring Indication in Audio connected state " +
+                                    "mInBandRingtone " + mInBandRingtone);
+                            if (mInBandRingtone !=
+                                    HeadsetClientHalConstants.IN_BAND_RING_NOT_PROVIDED) {
+                                break;
+                            }
+                            if (disconnectAudioNative(getByteAddress(mCurrentDevice))) {
+                                mAudioState = BluetoothHeadsetClient.STATE_AUDIO_DISCONNECTED;
+                                //abandon audio focus
+                                if (mAudioManager.getMode() != AudioManager.MODE_NORMAL) {
+                                    mAudioManager.setMode(AudioManager.MODE_NORMAL);
+                                    Log.d(TAG, "abandonAudioFocus");
+                                    //abandon audio focus after the mode has been set back to normal
+                                    mAudioManager.abandonAudioFocusForCall();
+                                }
+                                Log.d(TAG,"hfp_enable=false");
+                                mAudioManager.setParameters("hfp_enable=false");
+                                broadcastAudioState(mCurrentDevice,
+                                        BluetoothHeadsetClient.STATE_AUDIO_DISCONNECTED,
+                                        BluetoothHeadsetClient.STATE_AUDIO_CONNECTED);
+                            }
+                            break;
+                        case EVENT_TYPE_CGMI:
+                            Log.d(TAG, "cgmi:" + event.valueString);
+                            // broadcast intent with the string
+                            intent = new Intent(BluetoothHeadsetClient.ACTION_AG_EVENT);
+                            intent.putExtra(BluetoothHeadsetClient.EXTRA_MANF_ID,
+                                     event.valueString);
+                            intent.putExtra(BluetoothDevice.EXTRA_DEVICE, event.device);
+                            mService.sendBroadcast(intent, ProfileService.BLUETOOTH_PERM);
+                            break;
+                        case EVENT_TYPE_CGMM:
+                            Log.d(TAG, "cgmm:" + event.valueString);
+                            // broadcast intent with the string
+                            intent = new Intent(BluetoothHeadsetClient.ACTION_AG_EVENT);
+                            intent.putExtra(BluetoothHeadsetClient.EXTRA_MANF_MODEL,
+                                     event.valueString);
+                            intent.putExtra(BluetoothDevice.EXTRA_DEVICE, event.device);
+                            mService.sendBroadcast(intent, ProfileService.BLUETOOTH_PERM);
                             break;
                         default:
                             return NOT_HANDLED;
@@ -2578,6 +2678,20 @@ final class HeadsetClientStateMachine extends StateMachine {
         sendMessage(STACK_EVENT, event);
     }
 
+    private void onCgmi(String manf_id) {
+        StackEvent event = new StackEvent(EVENT_TYPE_CGMI);
+        event.valueString = manf_id;
+        Log.d(TAG, "incoming" + event);
+        sendMessage(STACK_EVENT, event);
+    }
+
+    private void onCgmm(String manf_model) {
+        StackEvent event = new StackEvent(EVENT_TYPE_CGMM);
+        event.valueString = manf_model;
+        Log.d(TAG, "incoming" + event);
+        sendMessage(STACK_EVENT, event);
+    }
+
     private String getCurrentDeviceName() {
         String defaultName = "<unknown>";
         if (mCurrentDevice == null) {
@@ -2617,6 +2731,8 @@ final class HeadsetClientStateMachine extends StateMachine {
     final private static int EVENT_TYPE_IN_BAND_RING = 19;
     final private static int EVENT_TYPE_LAST_VOICE_TAG_NUMBER = 20;
     final private static int EVENT_TYPE_RING_INDICATION= 21;
+    final private static int EVENT_TYPE_CGMI= 22;
+    final private static int EVENT_TYPE_CGMM= 23;
 
     // for debugging only
     private final String EVENT_TYPE_NAMES[] =
@@ -2643,6 +2759,8 @@ final class HeadsetClientStateMachine extends StateMachine {
             "EVENT_TYPE_IN_BAND_RING",
             "EVENT_TYPE_LAST_VOICE_TAG_NUMBER",
             "EVENT_TYPE_RING_INDICATION",
+            "EVENT_TYPE_CGMI",
+            "EVENT_TYPE_CGMM",
     };
 
     private class StackEvent {
