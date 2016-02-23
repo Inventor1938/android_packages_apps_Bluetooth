@@ -220,7 +220,6 @@ static bthh_callbacks_t sBluetoothHidCallbacks = {
 // Define native functions
 
 static void classInitNative(JNIEnv* env, jclass clazz) {
-    int err;
 //    const bt_interface_t* btInf;
 //    bt_status_t status;
 
@@ -296,7 +295,6 @@ static void initializeNative(JNIEnv *env, jobject object) {
 
 static void cleanupNative(JNIEnv *env, jobject object) {
     const bt_interface_t* btInf;
-    bt_status_t status;
 
     if ( (btInf = getBluetoothInterface()) == NULL) {
         ALOGE("Bluetooth module is not loaded");
