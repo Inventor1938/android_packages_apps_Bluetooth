@@ -4,6 +4,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE_TAGS := optional
 
 LOCAL_CFLAGS += -Os
+LOCAL_CFLAGS += -fno-strict-aliasing
 
 LOCAL_SRC_FILES := \
         $(call all-java-files-under, lib/mapapi)
